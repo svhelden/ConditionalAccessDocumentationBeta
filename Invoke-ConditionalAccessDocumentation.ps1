@@ -25,7 +25,7 @@
     Creation Date:    31.01.2022
 #>
 
-#Requires -Module @{ ModuleName = 'Microsoft.Graph.Identity.SignIns'; ModuleVersion = '1.21.0'},@{ ModuleName = 'Microsoft.Graph.DirectoryObjects'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Users'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Identity.DirectoryManagement'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Groups'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Applications'; ModuleVersion = '1.21.0'}
+#Requires -Module @{ ModuleName = 'Microsoft.Graph.Beta.Identity.SignIns'; ModuleVersion = '1.21.0'},@{ ModuleName = 'Microsoft.Graph.Beta.DirectoryObjects'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Beta.Authentication'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Beta.Users'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Beta.Identity.DirectoryManagement'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Beta.Groups'; ModuleVersion = '1.21.0'}, @{ ModuleName = 'Microsoft.Graph.Beta.Applications'; ModuleVersion = '1.21.0'}
 
 function Test-Guid {
     <#
@@ -79,7 +79,7 @@ function Resolve-MgObject {
                     return $displayNameCache[$InputObject]
                 }
                 else {
-                    $directoryObject = Get-MgDirectoryObject -DirectoryObjectId $InputObject -ErrorAction Stop
+                    $directoryObject = Get-MgBetaDirectoryObject -DirectoryObjectId $InputObject -ErrorAction Stop
                     $displayName = $directoryObject.AdditionalProperties["displayName"]
                     $displayNameCache[$InputObject] = $displayName
                     return $displayName
@@ -93,26 +93,28 @@ function Resolve-MgObject {
     }
 }
 
-if (-not $(Get-MgContext)) {
+if (-not $(Get-MgBetaContext)) {
     Throw "Authentication needed, call 'Connect-Graph -Scopes `"Application.Read.All`", `"Group.Read.All`", `"Policy.Read.All`", `"RoleManagement.Read.Directory`", `"User.Read.All`""
 }
 
-if ((Get-MgProfile).Name.ToLower() -ne "beta") {
+<#
+if ((Get-MgBetaProfile).Name.ToLower() -ne "beta") {
     Write-Warning "You might miss some Conditional Access Policies as you are using the v1.0 Microsoft Graph Endpoint!"
     Write-Warning "You can switch to the beta endpoint with: `"Select-MgProfile -Name `"beta`"`""
 }
+#>
 
 Write-Progress -PercentComplete -1 -Activity "Fetching conditional access policies and related data from Graph API"
 
 # Get Conditional Access Policies
-$conditionalAccessPolicies = Get-MgIdentityConditionalAccessPolicy -ExpandProperty "*" -All -ErrorAction Stop
+$conditionalAccessPolicies = Get-MgBetaIdentityConditionalAccessPolicy -All -ErrorAction Stop
 #Get Conditional Access Named / Trusted Locations
-$namedLocations = Get-MgIdentityConditionalAccessNamedLocation -All -ErrorAction Stop | Group-Object -Property Id -AsHashTable
+$namedLocations = Get-MgBetaIdentityConditionalAccessNamedLocation -All -ErrorAction Stop | Group-Object -Property Id -AsHashTable
 if (-not $namedLocations) { $namedLocations = @{} }
 # Get Azure AD Directory Role Templates
-$directoryRoleTemplates = Get-MgDirectoryRoleTemplate -All -ErrorAction Stop | Group-Object -Property Id -AsHashTable
+$directoryRoleTemplates = Get-MgBetaDirectoryRoleTemplate -All -ErrorAction Stop | Group-Object -Property Id -AsHashTable
 # Service Principals
-$servicePrincipals = Get-MgServicePrincipal -All -ErrorAction Stop | Group-Object -Property AppId -AsHashTable
+$servicePrincipals = Get-MgBetaServicePrincipal -All -ErrorAction Stop | Group-Object -Property AppId -AsHashTable
 # Init report 
 $documentation = [System.Collections.Generic.List[Object]]::new()
 # Cache for resolved display names
@@ -218,12 +220,7 @@ foreach ($policy in $conditionalAccessPolicies) {
             }
         }
         
-        $includeAuthenticationContext = [System.Collections.Generic.List[Object]]::new()
-        $policy.Conditions.Applications.IncludeAuthenticationContextClassReferences | ForEach-Object {
-            $context = Get-MgIdentityConditionalAccessAuthenticationContextClassReference -Filter "Id eq '$PSItem'"
-            $includeAuthenticationContext.Add($context.DisplayName)
-        }
-
+        
         # Resolve object IDs of included locations
         $includeLocations = [System.Collections.Generic.List[Object]]::new()
         $policy.conditions.Locations.IncludeLocations | ForEach-Object {
@@ -248,8 +245,7 @@ foreach ($policy in $conditionalAccessPolicies) {
         # delimiter for arrays in csv report
         $separator = "`r`n"
         # when terms of use are present just add a generic hint.
-        if ($policy.GrantControls.TermsOfUse) { $policy.GrantControls.BuiltInControls += "termsOfUse" }
-        if ($policy.GrantControls.AuthenticationStrength) { $policy.GrantControls.BuiltInControls += "authenticationStrength" }
+        if ($policy.GrantControls.TermsOfUse) { $policy.GrantControls.BuiltInControls += "TermsOfUse" }
 
         # construct entry for report
         $documentation.Add(
@@ -261,8 +257,8 @@ foreach ($policy in $conditionalAccessPolicies) {
                 IncludeRoles                              = $includeRoles -join $separator
 
                 ExcludeUsers                              = $excludeUsers -join $separator
-                ExcludeGuestOrExternalUserTypes           = $policy.Conditions.Users.ExcludeGuestsOrExternalUsers.guestOrExternalUserTypes
-                ExcludeGuestOrExternalUserTenants         = $policy.Conditions.Users.ExcludeGuestsOrExternalUsers.externalTenants.AdditionalProperties["members"] -join $separator
+                ExcludeGuestOrExternalUserTypes           = $policy.Conditions.Users.AdditionalProperties["excludeGuestsOrExternalUsers"].guestOrExternalUserTypes
+                ExcludeGuestOrExternalUserTenants         = $policy.Conditions.Users.AdditionalProperties["excludeGuestsOrExternalUsers"].externalTenants.members -join $separator
 
                 ExcludeGroups                             = $excludeGroups -join $separator
                 ExcludeRoles                              = $excludeRoles -join $separator
@@ -270,10 +266,9 @@ foreach ($policy in $conditionalAccessPolicies) {
                 IncludeApps                               = $includeApps -join $separator
                 ExcludeApps                               = $excludeApps -join $separator
 
-                ApplicationFilterMode                     = $policy.Conditions.Applications.ApplicationFilter.mode
-                ApplicationFilterRule                     = $policy.Conditions.Applications.ApplicationFilter.rule
+                ApplicationFilterMode                     = $policy.Conditions.Applications.AdditionalProperties["applicationFilter"].mode
+                ApplicationFilterRule                     = $policy.Conditions.Applications.AdditionalProperties["applicationFilter"].rule
 
-                IncludeAuthenticationContext              = $includeAuthenticationContext -join $separator
                 IncludeUserActions                        = $policy.Conditions.Applications.IncludeUserActions -join $separator
                 ClientAppTypes                            = $policy.Conditions.ClientAppTypes -join $separator
 
@@ -288,19 +283,19 @@ foreach ($policy in $conditionalAccessPolicies) {
 
                 SignInRiskLevels                          = $policy.Conditions.SignInRiskLevels -join $separator
                 UserRiskLevels                            = $policy.Conditions.UserRiskLevels -join $separator
-                ServicePrincipalRiskLevels                = $policy.Conditions.servicePrincipalRiskLevels -join $separator
+                ServicePrincipalRiskLevels                = $policy.Conditions.AdditionalProperties["servicePrincipalRiskLevels"] -join $separator
                
                 # Workload Identity Protection
                 IncludeServicePrincipals                  = $includeServicePrincipals -join $separator
                 ExcludeServicePrincipals                  = $excludeServicePrincipals -join $separator
-                ServicePrincipalFilterMode                = $policy.Conditions.ClientApplications.ServicePrincipalFilter.mode
-                ServicePrincipalFilter                    = $policy.Conditions.ClientApplications.ServicePrincipalFilter.rule
+                ServicePrincipalFilterMode                = $policy.Conditions.ClientApplications.AdditionalProperties["servicePrincipalFilter"].mode
+                ServicePrincipalFilter                    = $policy.Conditions.ClientApplications.AdditionalProperties["servicePrincipalFilter"].rule
                
                 # Grantcontrols
                 GrantControls                             = $policy.GrantControls.BuiltInControls -join $separator
                 GrantControlsOperator                     = $policy.GrantControls.Operator
-                AuthenticationStrength                    = $policy.GrantControls.AuthenticationStrength.DisplayName
-                AuthenticationStrengthAllowedCombinations = $policy.GrantControls.AuthenticationStrength.AllowedCombinations -join $separator
+                AuthenticationStrength                    = $policy.GrantControls.AdditionalProperties["authenticationStrength"].displayName
+                AuthenticationStrengthAllowedCombinations = $policy.GrantControls.AdditionalProperties["authenticationStrength"].allowedCombinations -join $separator
 
                 # Session controls
                 ApplicationEnforcedRestrictions           = $policy.SessionControls.ApplicationEnforcedRestrictions.IsEnabled
@@ -308,7 +303,6 @@ foreach ($policy in $conditionalAccessPolicies) {
                 DisableResilienceDefaults                 = $policy.SessionControls.DisableResilienceDefaults
                 PersistentBrowser                         = $policy.SessionControls.PersistentBrowser.Mode
                 SignInFrequency                           = "$($policy.SessionControls.SignInFrequency.Value) $($policy.SessionControls.SignInFrequency.Type)"
-                SecureSignInSession                       = $policy.SessionControls.AdditionalProperties["secureSignInSession"].isEnabled
 
                 # State
                 State                                     = $policy.State
